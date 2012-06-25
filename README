@@ -1,0 +1,34 @@
+Arduino Ethernet / Wifi Aurora Monitor and Twitter feed
+
+Copyright: Jetty, June 2012
+License: GNU General Public License v3: http://www.gnu.org/licenses/gpl-3.0.txt
+
+Please see Thing 25528 for details about construction and usage.
+http://www.thingiverse.com/thing:25528
+
+This software has been tested on Arduino Ethernet and Linksprite DiamondBack Arduino.
+
+It should also work an an Arduino with Ethernet Shield or an Arduino with Wifi Shield or
+built in Wifi that is Asynclab Black Widow WiShield 1.0 compatible.
+
+It's highly recommended that you build this with the Arduino 1.0.1 IDE or later as
+it was tested on this version.   Because of limited SRAM on the Arduino, and differences
+in library versions / compilers / IDEs etc. it's also recommended you use the libraries
+included in this repository.
+
+
+Building:
+
+1. Install the libraries attached in Arduino/libraries and restart the ArduinoIDE
+(If you do not have a Wifi capable Arduino, you do not need to install the WiShield library)
+
+2. Choose the appropriate sources for your board type, i.e. AuroraMonitorEthernet or AuroraMonitorWifi
+
+3. All settings can be found at the top of the .ino source file.  
+   Configure your network, twitter, timezone, local aurora and led settings.
+
+4. Upload to the board.
+
+5. In case of issues, there's substantial debugging information on the serial port.
+
+6. Tune your RGB LED Colors in the ledStatuses variable.
