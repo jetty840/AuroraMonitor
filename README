@@ -1,10 +1,10 @@
-Arduino Ethernet / Wifi Aurora Monitor and Twitter feed
+Arduino Ethernet / Wifi Aurora Monitor V2 and Twitter feed
 
-Copyright: Jetty, June 2012
+Copyright: Jetty, Februrary 2013
 License: GNU General Public License v3: http://www.gnu.org/licenses/gpl-3.0.txt
 
-Please see Thing 25528 for details about construction and usage.
-http://www.thingiverse.com/thing:25528
+Please see Thing 47973 for details about construction and usage.
+http://www.thingiverse.com/thing:47973
 
 This software has been tested on Arduino Ethernet and Linksprite DiamondBack Arduino.
 
@@ -27,8 +27,18 @@ Building:
 3. All settings can be found at the top of the .ino source file.  
    Configure your network, twitter, timezone, local aurora and led settings.
 
-4. Upload to the board.
+4. This can be built with or without LCD and Pushbutton support.  To build
+without LCD, comment out #define LCD_ENABLED .  If you're building without LCD, then
+follow the build instructions for Aurora Monitor V1:  http://www.thingiverse.com/thing:25528
 
-5. In case of issues, there's substantial debugging information on the serial port.
+5. Upload to the board.
 
-6. Tune your RGB LED Colors in the ledStatuses variable.
+6. In case of issues, there's substantial debugging information on the serial port.
+
+7. Tune your RGB LED Colors in the ledStatuses variable.
+
+8. If you are building with LCD, you need to set the Daylight Savings, hold the push button
+for 7 seconds and release, this will enter DST mode.  Now press the push button momentarily to
+switch between DST ON and DST OFF.  To exit this mode, hold the push button for 7 seconds and release.
+
+The DST setting is saved in EEPROM and is maintained when power is off.

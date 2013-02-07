@@ -1,13 +1,14 @@
 //
-//  Aurora Monitor - Wifi Version
-//  Arduino Ethernet / Wifi Aurora Monitor and twitter feed (http://www.thingiverse.com/thing:25528)
+//  Aurora Monitor V2 - Wifi Version
+//  Arduino Ethernet / Wifi Aurora Monitor and twitter feed (http://www.thingiverse.com/thing:47973)
 //
-//  Copyright: Jetty, June 2012
+//  Copyright: Jetty, Februrary 2013
 //  License: GNU General Public License v3: http://www.gnu.org/licenses/gpl-3.0.txt
 //
 //  Requires Arduino 1.0.1 or later IDE
 //  Requires Arduino with Wifi Board or built in Wifi that is Asynclab BlackWidow WiShield 1.0 compatible
 //  Tested on: LinkSprite DiamondBack Arduino: http://www.robotshop.com/productinfo.aspx?pc=RB-Lin-40&lang=en-US
+//  Tested on: Arduino 1.0.1
 //
 //
 //  Requirements:
@@ -43,7 +44,7 @@
 //     Therefore it's generally considered safe to limit usage to 20ma per pin with a serial
 //     resistor.  
 //
-//     The calculation for this resistor is (and you'll need 1 per color) is:
+//     The calculation for this resistor (and you'll need 1 per color) is:
 //     Resistor (Ohms) = (5Volt - LED Forward Voltage Drop (per color)) / 0.020 (Current Amps)
 //
 //     For example, if the forward voltage of the LED is 2.2V, then:   (5-2.2) / 0.020 = 140 Ohms
@@ -53,6 +54,16 @@
 //     RGB Led's can be Common Cathode or Common Anode, set the appropriate type in the LED settings.
 //     Also, RGB led's have various spectrums, forward voltages etc., all of which effect the color, you
 //     will likely need to tune the color table below for your LED
+//
+//  Push Button Operation:
+//     A momentary push toggles the backlight for the LCD.  Note that during a storm the LCD backlight
+//     will switch on.  
+//
+//     To configure the Daylight Savings setting, hold the push button for 7 seconds
+//     and release, this will enter DST mode.  Now press the push button momentarily to switch between
+//     DST ON and DST OFF.  To exit this mode, hold the push button for 7 seconds and release.
+//
+//     The DST setting is saved in EEPROM and is maintained when power is off.
 //
 
 
@@ -123,6 +134,10 @@ byte thingSpeakIP[] = { 184, 106, 153, 149 };    //api.thingspeak.com
 
 ////// BEGIN TIMEZONE SETTINGS
 #define DAYLIGHT_SAVINGS_ACTIVE   true           //Set to true if it's currently daylight savings, otherwise false
+                                                 //NOTE: THIS IS ONLY USED IF LCD_ENABLED IS NOT DEFINED
+                                                 //      IF LCD_ENABLED IS DEFINED, DST IS SET VIA THE PUSHBUTTON SWITCH AND
+                                                 //      LCD INTERFACE (HOLD BUTTON FOR 7 SECONDS AND RELEASE TO CONFIGURE)                                                 
+#define DAYLIGHT_SAVINGS_EEPROM_ADDR  1          //Don't use location 0, as it will often be corrupted on brownouts
 #define TIMEZONE_OFFSET_FROM_UTC  (-7 * 60)      //In minutes, e.g. -7 * 60 = 7 hours behind UTC
 #define TIMEZONE                  "MDT"          //Set to your local timezone
 #define DAYLIGHT_SAVINGS_OFFSET   60             //In minutes, 60 = 1 hour which is normal, set to 0 if you don't observe daylight savings
@@ -159,6 +174,60 @@ byte wingKpIP[] = { 140, 90, 33, 21 };    //www.swpc.noaa.gov
 #define DEBUG_WINGKP_RESPONSE   //Comment out to stop the display of the results from the Wing Kp http query
 //#define MEMORY_USAGE_REPORTING  //Comment out to stop memory usage reporting
 ///// END DEBUGGING SETTINGS
+
+
+
+// LCD configuration, Hitachi HD44780 driver compatible + Pushbutton switch for control
+#define LCD_ENABLED
+
+#ifdef LCD_ENABLED
+  #include <LiquidCrystal.h>
+  #include <EEPROM.h>
+
+  #define D7            7
+
+  #define LCD_RS        D7
+  #define LCD_ENABLE    A4
+  #define LCD_BIT4      A3
+  #define LCD_BIT5      A2
+  #define LCD_BIT6      A1
+  #define LCD_BIT7      A0
+  #define LCD_BACKLIGHT A5
+
+  LiquidCrystal lcd(LCD_RS, LCD_ENABLE, LCD_BIT4, LCD_BIT5, LCD_BIT6, LCD_BIT7);
+  #define LCD_COLUMNS 16
+  #define LCD_ROWS    2
+
+  //Interface Switch
+  #define D4                4
+  #define PUSHBUTTON_SWITCH D4
+
+  enum debounceState 
+  {
+    DEBOUNCE_STATE_OFF = 0,
+    DEBOUNCE_STATE_TRANSITION_TO_ON,
+    DEBOUNCE_STATE_ON,
+    DEBOUNCE_STATE_TRANSITION_TO_OFF,
+  };
+
+  enum debounceState debounceState = DEBOUNCE_STATE_OFF;
+
+  long debounceTimer;
+
+  #define DEBOUNCE_TIMER_MS 50
+
+  long buttonPressedAt;
+
+  #define LONG_BUTTON_PRESS_MS 5000
+
+  enum buttonPushState
+  {
+    BUTTON_PUSH_STATE_NORMAL = 0,  //Normal operating mode
+    BUTTON_PUSH_STATE_DST_MODE,
+  };
+
+  enum buttonPushState buttonPushState = BUTTON_PUSH_STATE_NORMAL;
+#endif
 
 
 
@@ -225,8 +294,71 @@ enum MonitorState
 };
 
 volatile enum MonitorState monitorState;
+#ifdef LCD_ENABLED
+  enum MonitorState          lastMonitorState;
 
-char *twitterStatus[] = {"", "", "", "", "Down", "Quiet", "Low Storm", "Moderate Storm", "Major Storm", "Extreme Storm"};
+  prog_char monitorStateString_0[] PROGMEM = "Trying Comms...";
+  prog_char monitorStateString_1[] PROGMEM = "WingKp: Request";
+  prog_char monitorStateString_2[] PROGMEM = "WingKp: Download";
+  prog_char monitorStateString_3[] PROGMEM = "WingKp: NO COMMS";
+  prog_char monitorStateString_4[] PROGMEM = "WingKp: DOWN/-1";
+  prog_char monitorStateString_5[] PROGMEM = "Status: Quiet";
+  prog_char monitorStateString_6[] PROGMEM = "Storm: LOW";
+  prog_char monitorStateString_7[] PROGMEM = "Storm: MODERATE";
+  prog_char monitorStateString_8[] PROGMEM = "Storm: HIGH";
+  prog_char monitorStateString_9[] PROGMEM = "Storm: EXTREME";
+
+  PROGMEM const char *monitorStateTable[] =
+  {   
+    monitorStateString_0,
+    monitorStateString_1,
+    monitorStateString_2,
+    monitorStateString_3,
+    monitorStateString_4,
+    monitorStateString_5,
+    monitorStateString_6,
+    monitorStateString_7,
+    monitorStateString_8,
+    monitorStateString_9,
+  };
+
+  prog_char statusInitializing[] PROGMEM = "Initializing...";
+  prog_char statusLEDTesting  [] PROGMEM = "LED Testing...";
+  prog_char statusStartingWifi[] PROGMEM = "Starting Wifi...";
+
+  prog_char lcd_info_1hrkp_str[]       PROGMEM = "1h Kp ";
+  prog_char lcd_info_4hrkp_str[]       PROGMEM = "4h Kp ";
+  prog_char lcd_info_3hrkp_earth_str[] PROGMEM = "Earth 3hr   ";
+  prog_char lcd_info_confidence_str[]  PROGMEM = "Confidence  ";
+  prog_char lcd_info_last_update_str[] PROGMEM = "LastUpdate ";
+  prog_char lcd_info_blank_line_str[]  PROGMEM = "                ";
+
+  prog_char dst_on_str[]  PROGMEM = "Dst ON";
+  prog_char dst_off_str[] PROGMEM = "Dst OFF";
+#endif
+
+prog_char twitterStatus_none[]     PROGMEM = "";
+prog_char twitterStatus_down[]     PROGMEM = "Down";
+prog_char twitterStatus_quiet[]    PROGMEM = "Quiet";
+prog_char twitterStatus_low[]      PROGMEM = "Low Storm";
+prog_char twitterStatus_moderate[] PROGMEM = "Moderate Storm";
+prog_char twitterStatus_major[]    PROGMEM = "Major Storm";
+prog_char twitterStatus_extreme[]  PROGMEM = "Extreme Storm";
+
+PROGMEM const char *twitterStatusTable[] =
+{   
+  twitterStatus_none,
+  twitterStatus_none,
+  twitterStatus_none,
+  twitterStatus_none,
+  twitterStatus_down,
+  twitterStatus_quiet,
+  twitterStatus_low,
+  twitterStatus_moderate,
+  twitterStatus_major,
+  twitterStatus_extreme,
+};
+
 
 struct LedStatus
 {
@@ -247,20 +379,45 @@ static const struct LedStatus PROGMEM ledStatuses[] =
    {120, 255, 60,  3000, 3000},   //MONITOR_STATE_WINGKP_DOWN,               White         3s On, 3s Off
    {0,   255, 11,  50,   10000},  //MONITOR_STATE_WINGKP_BELOW_TRIGGER,      Aurora Green  0.5s On, 3s Off
    {0,   255, 11,  5000, 50},     //MONITOR_STATE_WINGKP_STORM_LOW,          Aurora Green  3s On, 0.25s Off 
-   {255, 150, 0,   5000, 50},     //MONITOR_STATE_WINGKP_STORM_HIGH,         Aurora Red    3s On, 0.25s Off
+   {255, 150, 0,   5000, 50},     //MONITOR_STATE_WINGKP_STORM_MODERATE,     Aurora Orange 3s On, 0.25s Off
    {255, 0,   0,   5000, 50},     //MONITOR_STATE_WINGKP_STORM_HIGH,         Aurora Red    3s On, 0.25s Off
    {255, 70,  255, 5000, 50},     //MONITOR_STATE_WINGKP_STORM_EXTREME,      Aurora Violet 3s On, 0.25s Off
 };
 
 volatile bool ledOn = false;
-volatile unsigned int flashTimerCounter;
+volatile unsigned int  flashTimerCounter;
 
-#define FLASH_TIMER_1MSEC_RESET 130
+#define FLASH_TIMER_1MSEC_RESET           130
+
+#ifdef LCD_ENABLED
+  volatile unsigned int  lcdKpInfoTimerCounter;
+  volatile long          autoBacklightTimer;
+
+  #define LCD_KP_INFO_ROTATION_INTERVAL_MS  5000
+
+  #define AUTO_BACKLIGHT_TIMEOUT_MS         120000L  //2 mins
+#endif
 
 char *bufferPtr;
 #define MAX_FLOAT_SCAN_LEN 7
 
 AlarmID_t wingKpAlarm;
+
+#ifdef LCD_ENABLED
+  enum lcdInfoDisplayState
+  {
+     LCD_INFO_DISPLAY_STATE_NONE = 0,
+     LCD_INFO_DISPLAY_STATE_1HR_KP,
+     LCD_INFO_DISPLAY_STATE_4HR_KP,
+     LCD_INFO_DISPLAY_STATE_EARTH_3HR_KP,
+     LCD_INFO_DISPLAY_STATE_CONFIDENCE,
+     LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME,
+  };
+  #define LCD_INFO_DISPLAY_STATE_LAST LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME
+
+  enum lcdInfoDisplayState lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
+  enum lcdInfoDisplayState lastLcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
+#endif
 
 
 
@@ -363,10 +520,12 @@ void tweet(void)
 
 
 
-//Converts a time in UTC to local time
+//Converts a time in UTC to local time string
 
-int convertFromUTCToLocalTime(int utcTime)
+char *convertFromUTCToLocalTimeStr(int utcTime)
 {
+  static char ret[5+1];
+
   //Convert utcTime into minutes since midnight
   int mins  = utcTime % 100;
   int hours = utcTime / 100;
@@ -376,19 +535,37 @@ int convertFromUTCToLocalTime(int utcTime)
   localTime += TIMEZONE_OFFSET_FROM_UTC;
 
   //Correct for daylight savings
+#ifdef LCD_ENABLED
+  uint8_t dst = EEPROM.read(DAYLIGHT_SAVINGS_EEPROM_ADDR);
+  if ( dst == 255 )
+  {  
+    dst = 1;
+    EEPROM.write(DAYLIGHT_SAVINGS_EEPROM_ADDR, dst);
+  }
+  
+  if ( dst )  localTime += DAYLIGHT_SAVINGS_OFFSET;
+#else
   if ( DAYLIGHT_SAVINGS_ACTIVE )  localTime += DAYLIGHT_SAVINGS_OFFSET;
+#endif
 
   //With the above adjustments, the time could be outside the 24 hour range,
   //we need to normalize it to fit
   localTime = localTime % (24 * 60);
   if ( localTime < 0 )  localTime += 24 * 60;
 
-  //Now convert back into a string type time
+  //Now convert back into hours and mins
   hours = localTime / 60;
   mins = localTime % 60;
-  localTime = hours * 100 + mins;
 
-  return localTime;
+  //Now convert time into a str
+  ret[0] = '0' + hours  / 10;
+  ret[1] = '0' + hours  % 10;
+  ret[2] = ':';
+  ret[3] = '0' + mins / 10;
+  ret[4] = '0' + mins % 10;
+  ret[5] = '\0';
+  
+  return ret;
 }
 
 
@@ -425,13 +602,13 @@ void processWingKpResponse(void)
    updateLEDForKp(wdataLast.target1Index);
       
    //Tweet the wingkp index, we do it this weird way to save memory
-   int local1Time = convertFromUTCToLocalTime(wdataLast.target1Time);
-   int local4Time = convertFromUTCToLocalTime(wdataLast.target4Time);
-   sprintf(buffer, "%sKp: %s(%02d:%02d) ", TWEET_PREFIX, kpToStr(wdataLast.target1Index), local1Time / 100, local1Time % 100);
+   sprintf_P(buffer, PSTR("%sKp: %s(%s) "), TWEET_PREFIX, kpToStr(wdataLast.target1Index), convertFromUTCToLocalTimeStr(wdataLast.target1Time));
    bufferPtr = buffer + strlen(buffer);
-   sprintf(bufferPtr, "%s(%02d:%02d) %s (earth ", kpToStr(wdataLast.target4Index), local4Time / 100, local4Time % 100, TIMEZONE); 
+   sprintf_P(bufferPtr, PSTR("%s(%s) %s (earth "), kpToStr(wdataLast.target4Index), convertFromUTCToLocalTimeStr(wdataLast.target4Time), TIMEZONE); 
    bufferPtr += strlen(bufferPtr);
-   sprintf(bufferPtr, "%s) %d%%25 Status: %s", kpToStr(wdataLast.actual), 100 - wdataLast.status * 25, twitterStatus[monitorState] );
+   sprintf_P(bufferPtr, PSTR("%s) %d%%25 Status: "), kpToStr(wdataLast.actual), 100 - wdataLast.status * 25 );
+   bufferPtr += strlen(bufferPtr);
+   sprintf_P(bufferPtr, (prog_char *)pgm_read_word(&(twitterStatusTable[monitorState])) );
           
 #ifdef TWITTER
    //Only tweet if TWITTER_ALL_KP is set, or kp index >= TRIGGER_KP
@@ -446,6 +623,11 @@ void processWingKpResponse(void)
    }
 #endif
 
+#endif
+
+#ifdef LCD_ENABLED
+  lcdKpInfoTimerCounter = 0;
+  lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_1HR_KP;
 #endif
 
    //We get the wingkp index every 14 mins, until we get the same
@@ -689,14 +871,16 @@ void setColorForState(bool on)
 
 ISR(TIMER2_OVF_vect)
 {
-   flashTimerCounter ++;
-  
+   flashTimerCounter         ++;
+#ifdef LCD_ENABLED
+   lcdKpInfoTimerCounter     ++;
+#endif
+
    //Reset for the next 1 msec interrupt
    TCNT2 = FLASH_TIMER_1MSEC_RESET;
    TIFR2 = 0x00;
 
    //Handle flashing the led according to the flash pattern specified
-   
    if      (( ledOn ) && ( flashTimerCounter >= pgm_read_word(&ledStatuses[monitorState].flashOn) ))
    {
       ledOn = false;
@@ -709,6 +893,26 @@ ISR(TIMER2_OVF_vect)
       flashTimerCounter = 0;
       setColorForState(ledOn);
    }   
+   
+#ifdef LCD_ENABLED
+   //Rotate the LCD Kp Index Info Banner
+   if ( lcdKpInfoTimerCounter >= LCD_KP_INFO_ROTATION_INTERVAL_MS )
+   {
+      if      ( lcdInfoDisplayState == LCD_INFO_DISPLAY_STATE_NONE )  ;  //DO NOTHING
+      else if ( lcdInfoDisplayState == LCD_INFO_DISPLAY_STATE_LAST )
+            lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_1HR_KP;
+      else  lcdInfoDisplayState = (enum lcdInfoDisplayState)(lcdInfoDisplayState + 1);
+
+      lcdKpInfoTimerCounter = 0;     
+   }
+   
+   //If device is in a non-storm state, timeout the backlight and switch off after 2 mins to save the backlight LEDs
+   if ( monitorState < MONITOR_STATE_WINGKP_STORM_LOW && (millis() - autoBacklightTimer) >= AUTO_BACKLIGHT_TIMEOUT_MS )
+   {
+     lcdBacklightOff();
+     autoBacklightTimer = millis();
+   }
+#endif
 }
 
 
@@ -746,11 +950,294 @@ void setupLedFlasherInterrupt(void)
 
 
 
+#ifdef LCD_ENABLED
+
+void lcdPrintProgStr(const prog_char str[])
+{
+  char c;
+  while ((c = pgm_read_byte(str++)))
+    lcd.write(c);
+}
+
+
+
+void lcdPrintStatusStr(const prog_char str[])
+{
+  lcd.clear();
+  lcdPrintProgStr(str);
+}
+
+
+
+void lcdDisplayState(void)
+{
+  lcd.clear();
+  lcdPrintProgStr((prog_char *)pgm_read_word(&(monitorStateTable[monitorState])));
+}
+
+
+
+void lcdDisplayNumber(uint8_t num)
+{
+  uint8_t remainder = 0, q = 0;
+  bool leadingSpace = true;
+
+  //100's  
+  q = num/100;
+  if ( q != 0 )
+  {
+    lcd.write('0' + q);
+    leadingSpace = false;
+  }
+  remainder = num - q * 100;
+
+  //10's
+  q = remainder / 10;
+  if ( q != 0 || leadingSpace == false )
+  {
+    lcd.write('0' + q);
+    leadingSpace = false;
+  }
+  remainder = remainder - q * 10;
+
+  //1's
+  lcd.write('0' + remainder);
+}
+
+
+void lcdDisplayLocalIp(void)
+{
+  lcd.clear();
+  lcdDisplayNumber(local_ip[0]);
+  lcd.print('.');
+  lcdDisplayNumber(local_ip[1]);
+  lcd.print('.');
+  lcdDisplayNumber(local_ip[2]);
+  lcd.print('.');
+  lcdDisplayNumber(local_ip[3]);
+}
+
+
+
+void lcdPrintKpInfo(void)
+{
+  lcd.setCursor(0,1);
+  lcdPrintProgStr(lcd_info_blank_line_str);
+  lcd.setCursor(0,1);
+  
+  switch(lcdInfoDisplayState)
+  {
+   case LCD_INFO_DISPLAY_STATE_NONE:
+     break;
+     
+   case LCD_INFO_DISPLAY_STATE_1HR_KP:
+     lcdPrintProgStr(lcd_info_1hrkp_str);
+     lcd.print(kpToStr(wdataLast.target1Index));
+     lcd.write(32);
+     lcd.print(convertFromUTCToLocalTimeStr(wdataLast.target1Time));
+     break;
+   
+   case LCD_INFO_DISPLAY_STATE_4HR_KP:
+     lcdPrintProgStr(lcd_info_4hrkp_str);
+     lcd.print(kpToStr(wdataLast.target4Index));
+     lcd.write(32);
+     lcd.print(convertFromUTCToLocalTimeStr(wdataLast.target4Time));
+     break;
+   
+   case LCD_INFO_DISPLAY_STATE_EARTH_3HR_KP:
+     lcdPrintProgStr(lcd_info_3hrkp_earth_str);
+     lcd.print(kpToStr(wdataLast.actual));
+     break;
+   
+   case LCD_INFO_DISPLAY_STATE_CONFIDENCE:
+     lcdPrintProgStr(lcd_info_confidence_str);
+     lcdDisplayNumber(100 - wdataLast.status * 25);
+     lcd.write(37);  // %     
+     break;
+   
+   case LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME:
+     lcdPrintProgStr(lcd_info_last_update_str);
+     lcd.print(convertFromUTCToLocalTimeStr(wdataLast.predTime));
+     break;
+   
+   default:
+     break;
+  } 
+}
+
+
+
+void lcdBacklightOn(void)
+{
+  autoBacklightTimer = millis();
+  digitalWrite(LCD_BACKLIGHT, HIGH);
+}
+
+
+
+void lcdBacklightOff(void)
+{
+  autoBacklightTimer = millis();
+  digitalWrite(LCD_BACKLIGHT, LOW);
+}
+
+
+
+void lcdToggleBacklight(void)
+{
+  if ( digitalRead(LCD_BACKLIGHT) == HIGH )  lcdBacklightOff();
+  else
+  {
+    lcdBacklightOn();
+    lcdKpInfoTimerCounter = 0;
+    lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_1HR_KP;
+  }
+}
+
+
+
+void buttonPush(bool longPush)
+{
+  switch(buttonPushState)
+  {
+    case BUTTON_PUSH_STATE_NORMAL:
+      if ( longPush )
+      {
+        buttonPushState = BUTTON_PUSH_STATE_DST_MODE;
+        lcdBacklightOn();
+      }
+      else lcdToggleBacklight();
+      break;
+      
+    case BUTTON_PUSH_STATE_DST_MODE:
+      if ( longPush )
+      {
+        buttonPushState = BUTTON_PUSH_STATE_NORMAL;
+      }
+      else
+      {
+        uint8_t dst = EEPROM.read(DAYLIGHT_SAVINGS_EEPROM_ADDR);
+        if ( dst == 255 )
+        {
+          dst = 1;
+          EEPROM.write(DAYLIGHT_SAVINGS_EEPROM_ADDR, dst);
+        }
+        else
+        {
+          if ( dst == 1 )  dst = 0;
+          else             dst = 1;
+          EEPROM.write(DAYLIGHT_SAVINGS_EEPROM_ADDR, dst);
+        }
+      }
+      break;
+  }
+}
+
+
+
+void displayDstConfiguration(void)
+{
+  lcd.setCursor(0,1);
+  lcdPrintProgStr(lcd_info_blank_line_str);
+  lcd.setCursor(0,1);
+  
+  uint8_t dst = EEPROM.read(DAYLIGHT_SAVINGS_EEPROM_ADDR);
+  if ( dst == 255 )
+  {
+    dst = 1;
+    EEPROM.write(DAYLIGHT_SAVINGS_EEPROM_ADDR, dst);
+  }
+  else
+  {
+    if ( dst )  lcdPrintProgStr(dst_on_str);
+    else        lcdPrintProgStr(dst_off_str);
+  }
+}
+
+
+
+void handlePushButton(void)
+{
+   uint8_t switchRead = digitalRead(PUSHBUTTON_SWITCH);
+ 
+   switch(debounceState)
+   {
+      case DEBOUNCE_STATE_OFF:
+        if ( switchRead == LOW )
+        {
+          debounceState = DEBOUNCE_STATE_TRANSITION_TO_ON;
+          debounceTimer = millis();
+        }
+        break;
+        
+      case DEBOUNCE_STATE_TRANSITION_TO_ON:
+        if (( millis() - debounceTimer ) >= DEBOUNCE_TIMER_MS )
+        {
+          if ( switchRead == HIGH )  debounceState = DEBOUNCE_STATE_OFF;
+          else                      
+          {
+            debounceState = DEBOUNCE_STATE_ON;
+            //Button has been pushed down
+            buttonPressedAt = millis();
+          }
+        }
+        break;
+        
+      case DEBOUNCE_STATE_ON:
+        if ( switchRead == HIGH )
+        {
+          debounceState = DEBOUNCE_STATE_TRANSITION_TO_OFF;
+          debounceTimer = millis();
+        }
+        break;
+        
+      case DEBOUNCE_STATE_TRANSITION_TO_OFF:
+        if (( millis() - debounceTimer ) >= DEBOUNCE_TIMER_MS )
+        {
+          if ( switchRead == LOW )  debounceState = DEBOUNCE_STATE_ON;
+          else                      
+          {
+              debounceState = DEBOUNCE_STATE_OFF;
+              if (( millis() - buttonPressedAt ) >= LONG_BUTTON_PRESS_MS )
+              {
+                buttonPush(true);
+              }
+              else
+              {
+                buttonPush(false);
+              }
+          }
+        }
+        break;
+   }
+}
+
+#endif
+
+
+
 void setup()
 {
+#ifdef LCD_ENABLED
+  lastMonitorState    = (enum MonitorState)-1;
+  lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
+  
+  //Initialize the LCD
+  lcd.begin(LCD_COLUMNS, LCD_ROWS);
+  pinMode(LCD_BACKLIGHT, OUTPUT);
+  lcdBacklightOn();  //Backlight initially on
+  lcdPrintStatusStr(statusInitializing);
+#endif
+
   //Time for hardware to startup
   delay(1000);
   
+#ifdef LCD_ENABLED
+  //Turn on pullup resistor on switch input
+  pinMode(PUSHBUTTON_SWITCH, INPUT);
+  digitalWrite(PUSHBUTTON_SWITCH, HIGH);
+#endif
+
   Serial.begin(BAUD_RATE);
   
 #ifdef MEMORY_USAGE_REPORTING
@@ -760,6 +1247,9 @@ void setup()
 #ifdef LED_TEST_AT_STARTUP
   //Cycle through all the colors/states at start up
   serialPgmPrintln("LED Test Sequence");
+#ifdef LCD_ENABLED
+  lcdPrintStatusStr(statusLEDTesting);
+#endif
   for ( monitorState = MONITOR_STATE_STARTUP; monitorState <= MONITOR_STATE_LAST; monitorState = (enum MonitorState)(monitorState + 1) )
   {
       setColorForState(true);
@@ -768,7 +1258,7 @@ void setup()
       delay(1000);
   }
 #endif 
- 
+  
   monitorState = MONITOR_STATE_STARTUP;
 
   serialPgmPrintln("Setting up LED interrupt");
@@ -781,9 +1271,15 @@ void setup()
 
   //Start wifi
   serialPgmPrintln("Starting Wifi Network...");
+#ifdef LCD_ENABLED
+  lcdPrintStatusStr(statusStartingWifi);
+#endif
   WiServer.init(NULL);
   
   //Print out the local ip address
+#ifdef LCD_ENABLED
+  lcdDisplayLocalIp();
+#endif
   serialPgmPrint("Local IP: ");
   Serial.print(local_ip[0]);serialPgmPrint(".");
   Serial.print(local_ip[1]);serialPgmPrint(".");
@@ -791,7 +1287,11 @@ void setup()
   Serial.println(local_ip[3]);
 
   //To allow the network to fire up
+#ifdef LCD_ENABLED
+  delay(5000);  //We delay extra when we have an LCD to display the IP address
+#else
   delay(1000);
+#endif
   
   //Setup the reply data return functions for the http get / post
   getWingKp.setReturnFunc(wingkpReplyData);
@@ -804,6 +1304,10 @@ void setup()
   
   //Setoff an alarm to get the wingkp data the first time (2 seconds)
   Alarm.timerOnce(2, processWingKp);
+  
+#ifdef LCD_ENABLED
+  autoBacklightTimer = millis();
+#endif
   
 #ifdef MEMORY_USAGE_REPORTING
    memoryReport();
@@ -835,7 +1339,38 @@ void loop()
  
    //Need to always use "Alarm.delay" instead of "delay" if we're using alarms  
    Alarm.delay(10);
+   
+#ifdef LCD_ENABLED
+   if      ( monitorState != lastMonitorState )
+   {
+     lcdDisplayState();
+     lcdPrintKpInfo();  //We reprint the Kp Info, because Display State wiped it
      
+     //If we've transitioned from non-storm to storm, then switch the backlight on
+     if ( lastMonitorState < MONITOR_STATE_WINGKP_STORM_LOW && monitorState >= MONITOR_STATE_WINGKP_STORM_LOW)
+       lcdBacklightOn();
+     
+     //If we've transitioned from storm to non-storm then switch the backlight off
+     if ( lastMonitorState >= MONITOR_STATE_WINGKP_STORM_LOW && monitorState < MONITOR_STATE_WINGKP_STORM_LOW)
+       lcdBacklightOff();
+
+     lastMonitorState = monitorState;
+   }
+   else if ( buttonPushState == BUTTON_PUSH_STATE_DST_MODE )
+   {
+      //Handle the dst configuration state
+      displayDstConfiguration();      
+   }
+   else if ( lcdInfoDisplayState != lastLcdInfoDisplayState )
+   {
+     lcdPrintKpInfo();
+     lastLcdInfoDisplayState = lcdInfoDisplayState;
+   }
+   
+   //Handle pushbutton switch and debounce
+   handlePushButton();
+#endif
+   
 #ifdef MEMORY_USAGE_REPORTING
    memoryLoopCounter ++;
    if ( memoryLoopCounter >= 2000 )  //20 seconds
