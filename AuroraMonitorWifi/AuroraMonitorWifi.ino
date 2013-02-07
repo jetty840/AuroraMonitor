@@ -431,7 +431,7 @@ void processWingKpResponse(void)
    bufferPtr = buffer + strlen(buffer);
    sprintf(bufferPtr, "%s(%02d:%02d) %s (earth ", kpToStr(wdataLast.target4Index), local4Time / 100, local4Time % 100, TIMEZONE); 
    bufferPtr += strlen(bufferPtr);
-   sprintf(bufferPtr, "%s) %d%% Status: %s", kpToStr(wdataLast.actual), 100 - wdataLast.status * 25, twitterStatus[monitorState] );
+   sprintf(bufferPtr, "%s) %d%%25 Status: %s", kpToStr(wdataLast.actual), 100 - wdataLast.status * 25, twitterStatus[monitorState] );
           
 #ifdef TWITTER
    //Only tweet if TWITTER_ALL_KP is set, or kp index >= TRIGGER_KP

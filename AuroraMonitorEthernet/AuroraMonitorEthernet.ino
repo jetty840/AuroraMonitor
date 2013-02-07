@@ -585,7 +585,7 @@ void processWingKp(void)
       tweetMsgPtr = tweetMsg + strlen(tweetMsg);
       sprintf(tweetMsgPtr, "%s(%02d:%02d) %s (earth ", kpToStr(wdataLast.target4Index), local4Time / 100, local4Time % 100, TIMEZONE); 
       tweetMsgPtr += strlen(tweetMsgPtr);
-      sprintf(tweetMsgPtr, "%s) %d%% Status: %s", kpToStr(wdataLast.actual), 100 - wdataLast.status * 25, twitterStatus[monitorState] );
+      sprintf(tweetMsgPtr, "%s) %d%%25 Status: %s", kpToStr(wdataLast.actual), 100 - wdataLast.status * 25, twitterStatus[monitorState] );
               
 #ifdef TWITTER
 
