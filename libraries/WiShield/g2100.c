@@ -56,6 +56,7 @@ static U16 lastRssi;
 static U8 scan_cnt;
 static U8 wpa_psk_key[ZG_MAX_PMK_LEN];
 static U8 ssid_len;
+U16 zgLargePacketsDropped;
 
 void zg_init()
 {
@@ -65,6 +66,7 @@ void zg_init()
 	clr = SPSR;
 	clr = SPDR;
 
+	zgLargePacketsDropped = 0;
 	intr_occured = 0;
 	intr_valid = 0;
 	lastRssi = 0;
@@ -245,13 +247,23 @@ void zg_process_isr()
 			{
 				U16 rx_byte_cnt = (0x0000 | (hdr[1] << 8) | hdr[2]) & 0x0fff;
 
-				zg_buf[0] = ZG_CMD_RD_FIFO;
-				spi_transfer(zg_buf, rx_byte_cnt + 1, 1);
+				if (rx_byte_cnt >= UIP_BUFSIZE)
+				{
+					zgLargePacketsDropped ++;
 
+					intr_valid = 0;
+				}
+				else
+				{
+					zg_buf[0] = ZG_CMD_RD_FIFO;
+					spi_transfer(zg_buf, rx_byte_cnt + 1, 1);
+
+					intr_valid = 1;
+				}
+
+				// Tell the ZG2100 we're done reading the buffer
 				hdr[0] = ZG_CMD_RD_FIFO_DONE;
 				spi_transfer(hdr, 1, 1);
-
-				intr_valid = 1;
 
 				intr_state = 0;
 				break;
