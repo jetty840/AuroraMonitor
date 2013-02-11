@@ -40,6 +40,7 @@
    #include <WProgram.h> 
 #endif
 #include "WiServer.h"
+#include <avr/wdt.h>
 
 extern "C" {
     #include "g2100.h"
@@ -47,6 +48,7 @@ extern "C" {
 	#include "uip.h"
     #include "server.h"
 	#include "global-conf.h"
+	#include "timer.h"
 	void stack_init(void);
 	void stack_process(void);
 }
@@ -84,7 +86,15 @@ char txPin = -1;
 /* Digital output pin to indicate RX activity */
 char rxPin = -1;
 
-void Server::init(pageServingFunction function) {
+//Returns true on success, false if failed to start or make a connection to the Access Point
+//within the alloted time
+
+bool Server::init(pageServingFunction function, uint8_t timeoutSecs) {
+
+	struct timer connection_timer;
+
+	//Set a connection timer to timeout at timeoutSecs
+        timer_set(&connection_timer, CLOCK_SECOND * (clock_time_t)timeoutSecs);
 
 	// WiShield init
 	zg_init();
@@ -101,7 +111,9 @@ void Server::init(pageServingFunction function) {
 #endif
 
 	while(zg_get_conn_state() != 1) {
+		wdt_reset();
 		zg_drv_process();
+		if ( timer_expired(&connection_timer) ) 	return false;
 	}
 
 	// Start the stack
@@ -119,6 +131,8 @@ void Server::init(pageServingFunction function) {
 #ifdef DEBUG_VERBOSE
 	Serial.println("WiServer init called");
 #endif // DEBUG_VERBOSE
+
+	return true;
 }
 
 #ifdef USE_DIG8_INTR

@@ -177,8 +177,9 @@ class Server: public Print
 		 * Inits the server with the provided page serving function
 		 *
 		 * @param pageServerFunc name of the sketch's page serving function
+		 * @param timeoutSecs timeout after timeoutSecs if there's no cconnection
 		 */
-		void init(pageServingFunction function);
+		bool init(pageServingFunction function, uint8_t timeoutSecs);
 
 		/**
 		 * The server task method (must be called in the main loop to run the WiServer)
