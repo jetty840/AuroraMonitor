@@ -75,6 +75,7 @@
 #include <dns.h>
 #include <Time.h>
 #include <TimeAlarms.h>
+#include <avr/wdt.h>
 
 
 
@@ -118,6 +119,7 @@ const prog_char security_data[] PROGMEM = {
 #define WIRELESS_MODE_INFRA   1
 #define WIRELESS_MODE_ADHOC   2
 unsigned char wireless_mode = WIRELESS_MODE_INFRA;
+#define WIFI_STARTUP_TIMEOUT_SECS  60  //If the wifi network hasn't started in this time, the watchdog timer resets the arduino
 ////// END NETWORK SETTINGS
 
 
@@ -153,6 +155,68 @@ byte wingKpIP[] = { 140, 90, 33, 21 };    //www.swpc.noaa.gov
 #define WINGKP_HOST "www.swpc.noaa.gov"
 #define WINGKP_URL "/wingkp/wingkp_list.txt"
 ////// END WINGKP SETTINGS
+
+
+////// BEGIN WATCHDOG SETTINGS
+//     Enabling the watchdog provides some stability, i.e. if the comms hang, wifi doesn't start or the Arduino crashes,
+//     the Arduino will restart automatically.  However by default, most Arduino bootloaders have a bug in that
+//     will prevent the bootloader running the software after a watchdog reset.  Therefore, you will likely
+//     need to install a watchdog friendly bootloader before enabling this setting.
+//
+//     If your Arduino does not contain the fixed bootloader, after a watchdog reset, the Arduino will just hang and
+//     to bring it back again, you'll need to power cycle it and reload the software with WATCHDOG_TIMER_ENABLED disabled, before
+//     the watchdog kicks in and the reset happens.
+//
+//     To burn a bootloader, you'll need an ISP (In System Programmer), or you can build one with another Arduino:
+//        http://pdp11.byethost12.com/AVR/ArduinoAsProgrammer.htm
+//        http://electronics.stackexchange.com/questions/41700/using-an-arduino-as-an-avr-isp-in-system-programmer
+//    
+//     To fix and burn a new bootloader on the DiamondBack on Arduino IDE 1.0.1 with watchdog support, here's what I did on a Mac:
+//
+//     1. cd /Applications/Arduino.app/Contents/Resources/Java/hardware/arduino
+//
+//     2. Backup boards.txt, and duplicate the Arduino Duemilanove w/ ATmega328 entry, changing these 2 lines to this:
+//        atmega328.name=Arduino Duemilanove w/ ATmega328 (watchdog oscillator)
+//        atmega328.bootloader.file=ATmegaBOOT_168_atmega328_wdt.hex
+//
+//     3. cd /Applications/Arduino.app/Contents/Resources/Java/hardware/arduino/bootloaders/atmega
+// 
+//     4. Backup ATmegaBOOT_168.c and Makefile
+//
+//     5. Edit Makefile, duplicate atmega328 to the following (note -DWATCHDOG_MODS)
+//        atmega328_wdt: TARGET = atmega328
+//        atmega328_wdt: MCU_TARGET = atmega328p
+//        atmega328_wdt: CFLAGS += '-DMAX_TIME_COUNT=F_CPU>>4' '-DNUM_LED_FLASHES=1' -DBAUD_RATE=57600 -DWATCHDOG_MODS
+//        atmega328_wdt: AVR_FREQ = 16000000L
+//        atmega328_wdt: LDSECTION  = --section-start=.text=0x7800
+//        atmega328_wdt: $(PROGRAM)_atmega328_wdt.hex
+//
+//     6. From here:  http://n0m1.com/2012/04/01/how-to-compiling-the-arduino-bootloader/ follow Step 2 and Step 3
+//
+//     7. Edit ATmegaBOOT_168.c, and add:  GPIOR0 = ch;    after:
+//        #ifdef WATCHDOG_MODS
+//            ch = MCUSR;
+//        (this enables the reset reason to be stored and available in the main program in the GPIOR0 register)
+//
+//     8. Type:  make atmega328_wdt
+//
+//     9. Restart the Arduino IDE and Connect an ISP to the ICSP header DiamondBack
+//
+//     10. Select the new board type:  Arduino Deumalinove w/ ATmega328 (watchdog oscillator)
+// 
+//     11. Select the correct programmer for your ISP
+//
+//     12. Select Burn Bootloader
+//
+
+//#define WATCHDOG_TIMER_ENABLED
+
+#ifdef WATCHDOG_TIMER_ENABLED
+  uint8_t reset_reason = 0;
+  #define NO_PREDICTION_UPDATE_TIMEOUT_MS  (unsigned long)(34UL * 60UL * 1000UL)  //34 mins (or just over 2 updates)
+  volatile unsigned long lastSuccessfullUpdate = 0;
+#endif
+////// END WATCHDOG SETTNGS
 
 
 ////// BEGIN RGB LED SETTINGS
@@ -322,19 +386,7 @@ volatile enum MonitorState monitorState;
     monitorStateString_9,
   };
 
-  prog_char statusInitializing[] PROGMEM = "Initializing...";
-  prog_char statusLEDTesting  [] PROGMEM = "LED Testing...";
-  prog_char statusStartingWifi[] PROGMEM = "Starting Wifi...";
-
-  prog_char lcd_info_1hrkp_str[]       PROGMEM = "1h Kp ";
-  prog_char lcd_info_4hrkp_str[]       PROGMEM = "4h Kp ";
-  prog_char lcd_info_3hrkp_earth_str[] PROGMEM = "Earth 3hr   ";
-  prog_char lcd_info_confidence_str[]  PROGMEM = "Confidence  ";
-  prog_char lcd_info_last_update_str[] PROGMEM = "LastUpdate ";
   prog_char lcd_info_blank_line_str[]  PROGMEM = "                ";
-
-  prog_char dst_on_str[]  PROGMEM = "Dst ON";
-  prog_char dst_off_str[] PROGMEM = "Dst OFF";
 #endif
 
 prog_char twitterStatus_none[]     PROGMEM = "";
@@ -412,8 +464,9 @@ AlarmID_t wingKpAlarm;
      LCD_INFO_DISPLAY_STATE_EARTH_3HR_KP,
      LCD_INFO_DISPLAY_STATE_CONFIDENCE,
      LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME,
+     LCD_INFO_DISPLAY_STATE_UPTIME,
   };
-  #define LCD_INFO_DISPLAY_STATE_LAST LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME
+  #define LCD_INFO_DISPLAY_STATE_LAST LCD_INFO_DISPLAY_STATE_UPTIME
 
   enum lcdInfoDisplayState lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
   enum lcdInfoDisplayState lastLcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
@@ -649,6 +702,10 @@ void processWingKpResponse(void)
    }
 
    lastPredTime = wdataLast.predTime;
+   
+#ifdef WATCHDOG_TIMER_ENABLED
+   lastSuccessfullUpdate = millis();
+#endif
 }
 
 
@@ -686,6 +743,12 @@ void wingkpReplyData(char *data, int len)
             wingkpBytesReceived = 0;
             
             Alarm.timerOnce(1, wingkpRetrySubmit);
+            
+            if ( wingkpRetryCount == (NETWORK_RETRIES - 1) )
+            {
+                startWifi();
+                serialPgmPrint("** WIFI REINITIALIZED");
+            }
          }
          else setState(MONITOR_STATE_WINGKP_NO_COMMS);
       }
@@ -1031,33 +1094,49 @@ void lcdPrintKpInfo(void)
      break;
      
    case LCD_INFO_DISPLAY_STATE_1HR_KP:
-     lcdPrintProgStr(lcd_info_1hrkp_str);
+     lcdPrintProgStr(PSTR("1h Kp "));
      lcd.print(kpToStr(wdataLast.target1Index));
      lcd.write(32);
      lcd.print(convertFromUTCToLocalTimeStr(wdataLast.target1Time));
      break;
    
    case LCD_INFO_DISPLAY_STATE_4HR_KP:
-     lcdPrintProgStr(lcd_info_4hrkp_str);
+     lcdPrintProgStr(PSTR("4h Kp "));
      lcd.print(kpToStr(wdataLast.target4Index));
      lcd.write(32);
      lcd.print(convertFromUTCToLocalTimeStr(wdataLast.target4Time));
      break;
    
    case LCD_INFO_DISPLAY_STATE_EARTH_3HR_KP:
-     lcdPrintProgStr(lcd_info_3hrkp_earth_str);
+     lcdPrintProgStr(PSTR("Earth 3hr   "));
      lcd.print(kpToStr(wdataLast.actual));
      break;
    
    case LCD_INFO_DISPLAY_STATE_CONFIDENCE:
-     lcdPrintProgStr(lcd_info_confidence_str);
+     lcdPrintProgStr(PSTR("Confidence  "));
      lcdDisplayNumber(100 - wdataLast.status * 25);
      lcd.write(37);  // %     
      break;
    
    case LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME:
-     lcdPrintProgStr(lcd_info_last_update_str);
+     lcdPrintProgStr(PSTR("LastUpdate "));
      lcd.print(convertFromUTCToLocalTimeStr(wdataLast.predTime));
+     break;
+     
+   case LCD_INFO_DISPLAY_STATE_UPTIME:
+     lcdPrintProgStr(PSTR("Uptime "));
+     {
+     unsigned long t = millis() / 1000UL;
+     unsigned long days = t / (60UL * 60UL * 24UL);
+     unsigned long hours = (t / (60UL * 60UL)) % 24UL;
+     unsigned long mins = (t / 60UL ) % (24UL * 60UL);
+     lcd.print(days);
+     lcd.write('d');
+     lcd.print(hours);
+     lcd.write('h');
+     lcd.print(mins);
+     lcd.write('m');
+     }
      break;
    
    default:
@@ -1149,8 +1228,8 @@ void displayDstConfiguration(void)
   }
   else
   {
-    if ( dst )  lcdPrintProgStr(dst_on_str);
-    else        lcdPrintProgStr(dst_off_str);
+    if ( dst )  lcdPrintProgStr(PSTR("Dst ON"));
+    else        lcdPrintProgStr(PSTR("Dst OFF"));
   }
 }
 
@@ -1216,8 +1295,42 @@ void handlePushButton(void)
 
 
 
+//Start the wifi module and connect to the access point
+
+void startWifi(void)
+{
+  wdt_reset();
+
+  if ( ! WiServer.init(NULL, WIFI_STARTUP_TIMEOUT_SECS) )
+  {
+    serialPgmPrintln("WiServer Failed");
+    while(true);
+  }
+  
+  wdt_reset();
+  
+  delay(1000);
+  
+  wdt_reset();
+  
+  //Setup the reply data return functions for the http get / post
+  getWingKp.setReturnFunc(wingkpReplyData);
+#ifdef TWITTER
+  postTwitter.setReturnFunc(twitterReplyData);
+#endif
+}
+
+
+
 void setup()
 {
+#ifdef WATCHDOG_TIMER_ENABLED
+  reset_reason = GPIOR0;  //Store the reason for the reset for future use
+
+  //Enable the watchdog timer
+  wdt_enable(WDTO_8S);
+#endif
+
 #ifdef LCD_ENABLED
   lastMonitorState    = (enum MonitorState)-1;
   lcdInfoDisplayState = LCD_INFO_DISPLAY_STATE_NONE;
@@ -1226,11 +1339,29 @@ void setup()
   lcd.begin(LCD_COLUMNS, LCD_ROWS);
   pinMode(LCD_BACKLIGHT, OUTPUT);
   lcdBacklightOn();  //Backlight initially on
-  lcdPrintStatusStr(statusInitializing);
-#endif
+  lcdPrintStatusStr(PSTR("AuroraMonitor V2"));
 
+  wdt_reset();
+  delay(2000);
+  wdt_reset();
+
+  #ifdef WATCHDOG_TIMER_ENABLED
+    //Print out the reason for the reset
+    if ( reset_reason & _BV(WDRF))   lcdPrintStatusStr(PSTR("Watchdog Reset"));
+    if ( reset_reason & _BV(BORF))   lcdPrintStatusStr(PSTR("Brownout Reset"));
+    if ( reset_reason & _BV(EXTRF))  lcdPrintStatusStr(PSTR("External Reset"));
+    if ( reset_reason & _BV(PORF))   lcdPrintStatusStr(PSTR("Power-on Reset"));
+
+    wdt_reset();
+    delay(2000);
+    wdt_reset();
+  #endif
+#else
   //Time for hardware to startup
+  wdt_reset();
   delay(1000);
+  wdt_reset();
+#endif
   
 #ifdef LCD_ENABLED
   //Turn on pullup resistor on switch input
@@ -1238,8 +1369,8 @@ void setup()
   digitalWrite(PUSHBUTTON_SWITCH, HIGH);
 #endif
 
-  Serial.begin(BAUD_RATE);
-  
+  Serial.begin(BAUD_RATE);  
+
 #ifdef MEMORY_USAGE_REPORTING
    memoryReport();
 #endif
@@ -1248,13 +1379,15 @@ void setup()
   //Cycle through all the colors/states at start up
   serialPgmPrintln("LED Test Sequence");
 #ifdef LCD_ENABLED
-  lcdPrintStatusStr(statusLEDTesting);
+  lcdPrintStatusStr(PSTR("LED Testing..."));
 #endif
   for ( monitorState = MONITOR_STATE_STARTUP; monitorState <= MONITOR_STATE_LAST; monitorState = (enum MonitorState)(monitorState + 1) )
   {
       setColorForState(true);
+      wdt_reset();
       delay(2000);
       setColorForState(false);
+      wdt_reset();
       delay(1000);
   }
 #endif 
@@ -1272,9 +1405,10 @@ void setup()
   //Start wifi
   serialPgmPrintln("Starting Wifi Network...");
 #ifdef LCD_ENABLED
-  lcdPrintStatusStr(statusStartingWifi);
+  lcdPrintStatusStr(PSTR("Starting Wifi..."));
 #endif
-  WiServer.init(NULL);
+
+  startWifi();
   
   //Print out the local ip address
 #ifdef LCD_ENABLED
@@ -1293,12 +1427,6 @@ void setup()
   delay(1000);
 #endif
   
-  //Setup the reply data return functions for the http get / post
-  getWingKp.setReturnFunc(wingkpReplyData);
-#ifdef TWITTER
-  postTwitter.setReturnFunc(twitterReplyData);
-#endif
-
   //Setup the initial interval time
   wingKpSamplingInterval = WINGKP_SAMPLING_INITIAL;
   
@@ -1310,8 +1438,15 @@ void setup()
 #endif
   
 #ifdef MEMORY_USAGE_REPORTING
-   memoryReport();
+  memoryReport();
 #endif
+
+#ifdef WATCHDOG_TIMER_ENABLED
+  //Set the last successfull update time as now
+  lastSuccessfullUpdate = millis();
+#endif  
+  
+  wdt_reset();
 }
 
 
@@ -1339,6 +1474,12 @@ void loop()
  
    //Need to always use "Alarm.delay" instead of "delay" if we're using alarms  
    Alarm.delay(10);
+  
+#ifdef WATCHDOG_TIMER_ENABLED
+   //Only reset the watchdog, if we've updated recently
+   //This is used to forece an automatic restart of the arduino if we're not getting regular updates
+   if (( millis() - lastSuccessfullUpdate ) < NO_PREDICTION_UPDATE_TIMEOUT_MS ) wdt_reset();
+#endif
    
 #ifdef LCD_ENABLED
    if      ( monitorState != lastMonitorState )
