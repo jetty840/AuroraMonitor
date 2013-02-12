@@ -1129,7 +1129,7 @@ void lcdPrintKpInfo(void)
      unsigned long t = millis() / 1000UL;
      unsigned long days = t / (60UL * 60UL * 24UL);
      unsigned long hours = (t / (60UL * 60UL)) % 24UL;
-     unsigned long mins = (t / 60UL ) % (24UL * 60UL);
+     unsigned long mins = (t / 60UL ) % 60UL;
      lcd.print(days);
      lcd.write('d');
      lcd.print(hours);
