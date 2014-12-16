@@ -151,9 +151,9 @@ byte thingSpeakIP[] = { 184, 106, 153, 149 };    //api.thingspeak.com
 ////// END LOCAL AURORA SETTINGS
 
 ////// BEGIN WINGKP SETTINGS
-byte wingKpIP[] = { 140, 90, 33, 21 };    //www.swpc.noaa.gov
-#define WINGKP_HOST "www.swpc.noaa.gov"
-#define WINGKP_URL "/wingkp/wingkp_list.txt"
+byte wingKpIP[] = { 140, 90, 33, 21 };    //services.swpc.noaa.gov
+#define WINGKP_HOST "services.swpc.noaa.gov"
+#define WINGKP_URL "/text/wing-kp.txt"
 ////// END WINGKP SETTINGS
 
 

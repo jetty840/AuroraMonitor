@@ -125,7 +125,7 @@ IPAddress thingSpeakIP ( 184, 106, 153, 149 );    //api.thingspeak.com
 
 ////// BEGIN WINGKP SETTINGS
 IPAddress wingKpIP ( 140, 90, 33, 21 );    //www.swpc.noaa.gov
-#define WINGKP_URL "http://www.swpc.noaa.gov/wingkp/wingkp_list.txt"
+#define WINGKP_URL "http://services.swpc.noaa.gov/text/wing-kp.txt"
 ////// END WINGKP SETTINGS
 
 
