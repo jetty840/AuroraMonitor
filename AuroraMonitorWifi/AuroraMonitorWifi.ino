@@ -304,7 +304,8 @@ byte wingKpIP[] = { 140, 90, 33, 21 };    //services.swpc.noaa.gov
 #define HTTP_PORT 80
 #define NETWORK_RETRIES  5  //The number of times to retry tweets and wingkp index retreivals if the connection fails
 
-int wingkpBytesReceived, wingkpRetryCount;
+long wingkpBytesReceived;
+int wingkpRetryCount;
 GETrequest getWingKp(wingKpIP, HTTP_PORT, WINGKP_HOST, WINGKP_URL);
 #ifdef TWITTER
     int twitterBytesReceived, twitterRetryCount;
@@ -732,7 +733,7 @@ void wingkpReplyData(char *data, int len)
       serialPgmPrintln("End of transmission");
 
       //Safety check as occasionally the connection is closed with no data
-      if ( wingkpBytesReceived < 10 )
+      if ( wingkpBytesReceived < 10L )
       {
          if ( wingkpRetryCount < NETWORK_RETRIES )
          {
@@ -740,7 +741,7 @@ void wingkpReplyData(char *data, int len)
             serialPgmPrint("Zero Bytes Received, Retry: ");
             Serial.println(wingkpRetryCount);
          
-            wingkpBytesReceived = 0;
+            wingkpBytesReceived = 0L;
             
             Alarm.timerOnce(1, wingkpRetrySubmit);
             
@@ -789,7 +790,7 @@ void wingkpReplyData(char *data, int len)
         }
    }
 
-   wingkpBytesReceived += len;
+   wingkpBytesReceived += (long)len;
    
 #ifdef DEBUG_WINGKP_RESPONSE
    for ( int i = 0; i < len; i ++ )  Serial.print(data[i]);
@@ -892,7 +893,7 @@ void processWingKp(void)
    if ( monitorState == MONITOR_STATE_STARTUP )
        setState(MONITOR_STATE_STARTUP_FIRST_REQUEST);
 
-   wingkpBytesReceived = 0;
+   wingkpBytesReceived = 0L;
    wingkpRetryCount = 0;
    bufPos = 0;
    buffer[MAX_BUFFER] = NULL;  //Terminate at the end of the buffer just in case
