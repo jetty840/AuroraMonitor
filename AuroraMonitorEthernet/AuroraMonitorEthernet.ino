@@ -237,11 +237,10 @@ int lastPredTime = 193;  //Set to an arbitary value that won't be found in the d
 struct WingKpData 
 {
   int   predDay, predMonth, predYear, predTime;              //Date/Time the prediction was made (UTC)
-  int   status;                                              //Status
   int   target1Day, target1Month, target1Year, target1Time;  //1 hour prediction
-  float target1Index, target1LeadTimeMins;
+  float target1Index;
   int   target4Day, target4Month, target4Year, target4Time;  //4 hour prediction
-  float target4Index, target4LeadTimeMins;
+  float target4Index;
   float actual;                                              //Actual earth read kp
 };
 
@@ -300,7 +299,6 @@ volatile enum MonitorState monitorState;
   prog_char lcd_info_1hrkp_str[]       PROGMEM = "1h Kp ";
   prog_char lcd_info_4hrkp_str[]       PROGMEM = "4h Kp ";
   prog_char lcd_info_3hrkp_earth_str[] PROGMEM = "Earth 3hr   ";
-  prog_char lcd_info_confidence_str[]  PROGMEM = "Confidence  ";
   prog_char lcd_info_last_update_str[] PROGMEM = "LastUpdate ";
   prog_char lcd_info_blank_line_str[]  PROGMEM = "                ";
 
@@ -379,7 +377,6 @@ char *bufferPtr;
      LCD_INFO_DISPLAY_STATE_1HR_KP,
      LCD_INFO_DISPLAY_STATE_4HR_KP,
      LCD_INFO_DISPLAY_STATE_EARTH_3HR_KP,
-     LCD_INFO_DISPLAY_STATE_CONFIDENCE,
      LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME,
   };
   #define LCD_INFO_DISPLAY_STATE_LAST LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME
@@ -680,19 +677,16 @@ bool scanLastLineWingKp(void)
   wdataLast.predMonth              = scanFloat();
   wdataLast.predDay                = scanFloat();
   wdataLast.predTime               = scanFloat();
-  wdataLast.status                 = scanFloat();
   wdataLast.target1Year            = scanFloat();
   wdataLast.target1Month           = scanFloat();
   wdataLast.target1Day             = scanFloat();
   wdataLast.target1Time            = scanFloat();
   wdataLast.target1Index           = scanFloat();
-  wdataLast.target1LeadTimeMins    = scanFloat();
   wdataLast.target4Year            = scanFloat();
   wdataLast.target4Month           = scanFloat();
   wdataLast.target4Day             = scanFloat();
   wdataLast.target4Time            = scanFloat();
   wdataLast.target4Index           = scanFloat();
-  wdataLast.target4LeadTimeMins    = scanFloat();
   wdataLast.actual                 = scanFloat();
   
   return true;
@@ -758,7 +752,7 @@ void processWingKp(void)
       tweetMsgPtr = tweetMsg + strlen(tweetMsg);
       sprintf_P(tweetMsgPtr, PSTR("%s(%s) %s (earth "), kpToStr(wdataLast.target4Index), convertFromUTCToLocalTimeStr(wdataLast.target4Time), TIMEZONE); 
       tweetMsgPtr += strlen(tweetMsgPtr);
-      sprintf_P(tweetMsgPtr, PSTR("%s) %d%%25 Status: "), kpToStr(wdataLast.actual), 100 - wdataLast.status * 25 );
+      sprintf_P(tweetMsgPtr, PSTR("%s) Status: "), kpToStr(wdataLast.actual));
       tweetMsgPtr += strlen(tweetMsgPtr);
       sprintf_P(tweetMsgPtr, (prog_char *)pgm_read_word(&(twitterStatusTable[monitorState])) );
 
@@ -1012,13 +1006,7 @@ void lcdPrintKpInfo(void)
      lcdPrintProgStr(lcd_info_3hrkp_earth_str);
      lcd.print(kpToStr(wdataLast.actual));
      break;
-   
-   case LCD_INFO_DISPLAY_STATE_CONFIDENCE:
-     lcdPrintProgStr(lcd_info_confidence_str);
-     lcdDisplayNumber(100 - wdataLast.status * 25);
-     lcd.write(37);  // %     
-     break;
-   
+      
    case LCD_INFO_DISPLAY_STATE_LAST_UPDATE_TIME:
      lcdPrintProgStr(lcd_info_last_update_str);
      lcd.print(convertFromUTCToLocalTimeStr(wdataLast.predTime));
